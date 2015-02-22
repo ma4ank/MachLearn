@@ -1,128 +1,94 @@
 
 
-The following Libraries were used for this project, which you should install - if not done yet - and load on your working environment.
+Practical Machine Learning - Prediction Assignment Writeup
+==========================================================
 
+For this assignment I analyzed the provided data to determine what activity an individual perform.
+To do this I made use of caret and randomForest, this allowed me to generate correct answers for
+each of the 20 test data cases provided in this assignment.  I made use of a seed value for 
+consistent results.
+
+
+```{r}
+library(Hmisc)
 library(caret)
-library(rpart)
-library(e1071)
 library(randomForest)
+library(foreach)
+library(doParallel)
+set.seed(2048)
+options(warn=-1)
+```
 
-##Code 
+First, I loaded the data both from the provided training and test data provided by COURSERA.
+Some values contained a "#DIV/0!" that I replaced with an NA value.
 
-setwd("D:/My project/Machine learning")
-if(!file.exists("./data/")){dir.create("./data/")}
+```{r}
+training_data <- read.csv("pml-training.csv", na.strings=c("#DIV/0!") )
+evaluation_data <- read.csv("pml-testing.csv", na.strings=c("#DIV/0!") )
+```
 
-fileUrl<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
-download.file(fileUrl,destfile="./data/inTrain.csv")
-inTrain<-read.csv("./data/inTrain.csv")
+I also casted all columns 8 to the end to be numeric.
 
-fileUrl2<-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
-download.file(fileUrl,destfile="./data/inTest.csv")
-inTest<-read.csv("./data/inTest.csv")
+```{r}
+for(i in c(8:ncol(training_data)-1)) {training_data[,i] = as.numeric(as.character(training_data[,i]))}
 
-Partioning Training data set into two data sets, 60% for myTraining, 40% for myTesting:
+for(i in c(8:ncol(evaluation_data)-1)) {evaluation_data[,i] = as.numeric(as.character(evaluation_data[,i]))}
+```
 
+Some columns were mostly blank.  These did not contribute well to the prediction.  I chose a feature
+set that only included complete columns.  We also remove user name, timestamps and windows.  
 
-trainPart <- createDataPartition(y=inTrain$classe, p=0.6, list=FALSE)
-subTrain <- inTrain[trainPart, ]
-subTest <- inTrain[-trainPart, ]
-dim(subTrain)
-dim(subTest)
+Determine and display out feature set.
 
-##Cleaning the data
+```{r}
+feature_set <- colnames(training_data[colSums(is.na(training_data)) == 0])[-(1:7)]
+model_data <- training_data[feature_set]
+feature_set
+```
 
-The following transformations were used to clean the data:
+We now have the model data built from our feature set.
 
-Transformation 1: Cleaning NearZeroVariance Variables Run this code to view possible NZV Variables:
+```{r}
+idx <- createDataPartition(y=model_data$classe, p=0.75, list=FALSE )
+training <- model_data[idx,]
+testing <- model_data[-idx,]
+```
 
-myDataNZV <- nearZeroVar(subTrain, saveMetrics=TRUE)
+We now build 5 random forests with 150 trees each. We make use of parallel processing to build this
+model. I found several examples of how to perform parallel processing with random forests in R, this
+provided a great speedup.
 
-Run this code to create another subset without NZV variables:
+```{r}
+registerDoParallel()
+x <- training[-ncol(training)]
+y <- training$classe
 
-myNZVvars <- names(subTrain) %in% c("new_window", "kurtosis_roll_belt", "kurtosis_picth_belt",
-"kurtosis_yaw_belt", "skewness_roll_belt", "skewness_roll_belt.1", "skewness_yaw_belt",
-"max_yaw_belt", "min_yaw_belt", "amplitude_yaw_belt", "avg_roll_arm", "stddev_roll_arm",
-"var_roll_arm", "avg_pitch_arm", "stddev_pitch_arm", "var_pitch_arm", "avg_yaw_arm",
-"stddev_yaw_arm", "var_yaw_arm", "kurtosis_roll_arm", "kurtosis_picth_arm",
-"kurtosis_yaw_arm", "skewness_roll_arm", "skewness_pitch_arm", "skewness_yaw_arm",
-"max_roll_arm", "min_roll_arm", "min_pitch_arm", "amplitude_roll_arm", "amplitude_pitch_arm",
-"kurtosis_roll_dumbbell", "kurtosis_picth_dumbbell", "kurtosis_yaw_dumbbell", "skewness_roll_dumbbell",
-"skewness_pitch_dumbbell", "skewness_yaw_dumbbell", "max_yaw_dumbbell", "min_yaw_dumbbell",
-"amplitude_yaw_dumbbell", "kurtosis_roll_forearm", "kurtosis_picth_forearm", "kurtosis_yaw_forearm",
-"skewness_roll_forearm", "skewness_pitch_forearm", "skewness_yaw_forearm", "max_roll_forearm",
-"max_yaw_forearm", "min_roll_forearm", "min_yaw_forearm", "amplitude_roll_forearm",
-"amplitude_yaw_forearm", "avg_roll_forearm", "stddev_roll_forearm", "var_roll_forearm",
-"avg_pitch_forearm", "stddev_pitch_forearm", "var_pitch_forearm", "avg_yaw_forearm",
-"stddev_yaw_forearm", "var_yaw_forearm")
-subTrain <- subTrain[!myNZVvars]
-dim(subTrain)
-
-Transformation 2: Killing first column of Dataset - ID Removing first ID variable so that it does not interfer with ML Algorithms:
-
-subTrain <- subTrain[c(-1)]
-
-Transformation 3: Cleaning Variables with too many NAs. For Variables that have more than a 60% threshold of NA's I'm going to leave them out:
-
-trainingV3 <- subTrain
-for(i in 1:length(subTrain)) { 
-        if( sum( is.na( subTrain[, i] ) ) /nrow(subTrain) >= .6 ) { 
-        for(j in 1:length(trainingV3)) {
-            if( length( grep(names(subTrain[i]), names(trainingV3)[j]) ) ==1)  { 
-                trainingV3 <- trainingV3[ , -j]
-            }   
-        } 
-    }
+rf <- foreach(ntree=rep(150, 6), .combine=randomForest::combine, .packages='randomForest') %dopar% {
+randomForest(x, y, ntree=ntree) 
 }
+```
 
-dim(trainingV3)
-
-
-subTrain <- trainingV3
-rm(trainingV3)
-Same transformations on subTest and inTrain data sets.
-
-clean1 <- colnames(subTrain)
-clean2 <- colnames(subTrain[, -58])
-subTest <- subTest[clean1]
-inTest <- inTest[clean2]
-dim(inTest)
-
-##Coerce the data into the same type.
-
-for (i in 1:length(inTest) ) {
-        for(j in 1:length(subTrain)) {
-        if( length( grep(names(subTrain[i]), names(inTest)[j]) ) ==1)  {
-            class(inTest[j]) <- class(subTrain[i])
-        }      
-    }      
-}
-
-inTest <- rbind(subTrain[2, -58] , inTest)
-inTest <- inTest[-1,]
-
-##Random Forests
-
-modFitRF <- randomForest(classe ~. , data=subTrain)
-
-##Predicting:
-
-predictionsB1 <- predict(modFitRF, subTest, type = "class")
-
-confusionMatrix(predictionsRF, subTest$classe)
-##Overall Statistics
-
- ##              Accuracy : 0.999          
- ##                95% CI : (0.998, 0.9996)
- ##   No Information Rate : 0.2845         
- ##   P-Value [Acc > NIR] : < 2.2e-16      
-
- ##                 Kappa : 0.9987         
- ##Mcnemar's Test P-Value : NA 
-
-Testing on Real Testset
-predictionsB2 <- predict(modFitRF, inTest, type = "class")
+Provide error reports for both training and test data.
+```{r}
+predictions1 <- predict(rf, newdata=training)
+confusionMatrix(predictions1,training$classe)
 
 
+predictions2 <- predict(rf, newdata=testing)
+confusionMatrix(predictions2,testing$classe)
+```
+
+Conclusions and Test Data Submit
+--------------------------------
+
+As can be seen from the confusion matrix this model is very accurate.  I did experiment with PCA 
+and other models, but did not get as good of accuracy. Because my test data was around 99% 
+accurate I expected nearly all of the submitted test cases to be correct.  It turned out they 
+were all correct.
+
+Prepare the submission. (using COURSERA provided code)
+
+```{r}
 pml_write_files = function(x){
   n = length(x)
   for(i in 1:n){
@@ -131,4 +97,12 @@ pml_write_files = function(x){
   }
 }
 
-pml_write_files(predictionsB2)
+
+x <- evaluation_data
+x <- x[feature_set[feature_set!='classe']]
+answers <- predict(rf, newdata=x)
+
+answers
+
+pml_write_files(answers)
+```
